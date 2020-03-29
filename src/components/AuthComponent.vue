@@ -17,10 +17,12 @@
         <input
           type="text"
           class="form-control"
-          v-model="fio"
+          v-model.lazy="$v.fio.$model"
           placeholder="Фамилия Имя Отчество"
-          required="required"
         />
+         <span v-if="$v.fio.$dirty && !$v.fio.validFormat">
+          Фамилия и имя обязательны
+        </span>
       </div>
 
       <div class="form-group" v-if="doLogin">
@@ -58,6 +60,7 @@
         <button
           type="submit"
           class="btn btn-primary btn-block"
+          v-bind:class="{'disabled': formIsValid}"
           v-if="doRegister"
           v-on:click="register"
         >Зарегистрироваться</button>
@@ -81,20 +84,52 @@
 
 
 <script lang="ts">
-import { Component, Prop, Vue } from "vue-property-decorator";
+import { Component, Prop, Vue, Watch, Mixins } from "vue-property-decorator";
+import _ from "lodash";
+const axios = require("axios").default;
+import { validationMixin } from 'vuelidate'
+
+
+import { Validate } from 'vuelidate-property-decorators';
+import { required } from 'vuelidate/lib/validators'
 
 @Component
-export default class AuthComponent extends Vue {
-  @Prop() private msg!: string;
+export default class AuthComponent extends Mixins(validationMixin) {
+  @Prop() private msg!: string
+  @Watch("email") onEmailChanged(value: string, oldValue: string) {
+    console.log("email changed from " + oldValue, value)
+    this.debouncedCheckEmail();
+  }
+
+  @Watch("message") onMsgChanged(value: string) {
+    console.log("msg ", value);
+  }
+
+
+  public message = "";
 
   public email = "";
-  public fio = "";
+
+  @Validate({
+    validFormat: (val: string) => /^[А-я]+ [А-я-]+ *[А-я]*$/.test(val),
+  }) public fio = "";
+
   public password = "";
   public phone = "";
 
+  public formIsValid = false
   public doLogin = false;
   public doRegister = true;
   public forgotPassword = false;
+
+  private debouncedCheckEmail: any;
+  private apiUrl = 'https://demo.book24.ru/api/v1'
+
+  // lifecyle hook
+  created() {
+    // this.checkAuthorization() // пока не нужно, так как форма показывается, если пользователь не авторизован
+    this.debouncedCheckEmail = _.debounce(this.checkEmail, 400); // задержка 400 мс
+  }
 
   public toggleForgotPassword() {
     this.forgotPassword = true;
@@ -115,6 +150,56 @@ export default class AuthComponent extends Vue {
       phone: this.phone
     });
   }
+
+  public checkEmail() {
+    // email regexp with unicode 
+    const re = /^(([^<>()[\].,;:\s@"]+(\.[^<>()[\].,;:\s@"]+)*)|(".+"))@(([^<>()[\].,;:\s@"]+\.)+[^<>()[\].,;:\s@"]{2,})$/i;
+    if (!re.test(this.email.toLowerCase())) {
+      this.message = "invalid email " + this.email;
+      return;
+    }
+    axios
+      .post(this.apiUrl + '/user/check-email-availability/', 
+            {EMAIL: this.email.trim()},
+            {headers: {"X-TOKEN": "330d207892855dbd5abd5147ea562094", 
+                      "Authorization": "Basic ZGVtby5ib29rMjQ6Ym9vazI0"},
+                      // http status == 400 - для email, запрещенных для регистрации
+            validateStatus:  (status: number) => { return (status >= 200 && status < 300) || status === 400 }
+            })
+      .then((response: any) => {
+        console.log('api responce', response)
+        if (!response.data.success) {
+          const err =  response.data.errors || []
+          this.message = '' + err.map((er: {message: string }) =>  er.message).join('; ') // сливаем все сообщения в одну строку
+        }
+      })
+      .catch((error: string) => {
+        this.message = "Error! Could not reach the API. " + error;
+      });
+  }
+  private checkAuthorization() {
+    axios
+      .get(this.apiUrl + '/user-session/', 
+            {params: {TYPE_PLATFORM: 'desktop'},
+             headers: {"X-TOKEN": "330d207892855dbd5abd5147ea562094", 
+                      "Authorization": "Basic ZGVtby5ib29rMjQ6Ym9vazI0"},
+                      // http status == 400 - для email, запрещенных для регистрации
+            validateStatus:  (status: number) => { return (status >= 200 && status < 300) || status === 400 }
+            })
+      .then((response: any) => {
+        console.log('user-session api responce', response)
+        if (!response.data.success) {
+          console.log('пользователь не авторизован')
+        } else {
+          console.log('пользователь авторизован')
+        }
+      })
+      .catch((error: string) => {
+        this.message = "Error! Could not reach the API. " + error;
+      });
+  }
+
+
 }
 </script>
 
@@ -132,6 +217,7 @@ export default class AuthComponent extends Vue {
     margin: 0 0 15px;
   }
 }
+
 .form-control,
 .btn {
   min-height: 38px;
